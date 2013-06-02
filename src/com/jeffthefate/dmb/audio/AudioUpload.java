@@ -20,7 +20,12 @@ import org.apache.http.client.methods.HttpPut;
 import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.entity.ContentType;
 import org.apache.http.entity.StringEntity;
+import org.apache.http.entity.mime.MultipartEntity;
+import org.apache.http.entity.mime.content.FileBody;
 import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.params.BasicHttpParams;
+import org.apache.http.params.HttpConnectionParams;
+import org.apache.http.params.HttpParams;
 import org.apache.http.util.EntityUtils;
 
 import org.codehaus.jackson.JsonFactory;
@@ -42,14 +47,19 @@ public class AudioUpload {
 		startChoosing(null);
 		String name = null;
 		String objectId = null;
+		boolean passed = true;
 		for (String file : chosenFiles) {
 			//deleteAudio("80eda357-6aaf-42bb-a088-83aa414ed14e-aftw.mp3");
 			name = getNameFromFile(file);
 			objectId = checkUpload(name);
 			if (objectId == null)
-				associateUpload(getAssociateJsonString(name, uploadAudio(file)));
+				passed = associateUpload(getAssociateJsonString(name, uploadAudio(file)));
 			else
 				updateAudio(objectId, getAssociateJsonString(name, uploadAudio(file)));
+			if (!passed) {
+				JOptionPane.showMessageDialog(null, "Upload failed!", "", JOptionPane.ERROR_MESSAGE);
+				return;
+			}
 		}
 		JOptionPane.showMessageDialog(null, "Upload complete", "", JOptionPane.INFORMATION_MESSAGE);
 	}
@@ -71,19 +81,23 @@ public class AudioUpload {
 	}
 	
 	private static String uploadAudio(String filename) {
-		DefaultHttpClient httpclient = new DefaultHttpClient();
+		final HttpParams httpParams = new BasicHttpParams();
+	    HttpConnectionParams.setConnectionTimeout(httpParams, 30000);
+		DefaultHttpClient httpclient = new DefaultHttpClient(httpParams);
 		HttpResponse response = null;
 		HttpPost httpPost = new HttpPost("https://api.parse.com/1/files/" + filename);
 		String uploadString = null;
 		String parseFilename = null;
+		String filePath = lastDir.getPath().concat(File.separator).concat(filename);
+    	File file = new File(filePath);
+		MultipartEntity entity = new MultipartEntity();
+		FileBody fileBody = new FileBody(file);
+		entity.addPart("file", fileBody);
+		httpPost.setEntity(entity);
         httpPost.addHeader("X-Parse-Application-Id", "ImI8mt1EM3NhZNRqYZOyQpNSwlfsswW73mHsZV3R");
         httpPost.addHeader("X-Parse-REST-API-Key", "1smRSlfAvbFg4AsDxat1yZ3xknHQbyhzZ4msAi5w");
         httpPost.addHeader("Content-Type", "audio/mpeg");
         try {
-			httpPost.setEntity(new ByteArrayEntity(
-					FileUtils.readFileToByteArray(
-							new File(lastDir.getPath().concat(File.separator).concat(filename))),
-							ContentType.create("audio/mpeg")));
 			response = httpclient.execute(httpPost);
 			uploadString = EntityUtils.toString(response.getEntity());
 			// {"url":"http://files.parse.com/be170a0a-047c-41d0-8474-c1b80f509371/c2d8e768-8c96-481f-ab0b-3c67dfade8e3-aftw.mp3","name":"c2d8e768-8c96-481f-ab0b-3c67dfade8e3-aftw.mp3"}
@@ -115,24 +129,18 @@ public class AudioUpload {
 		return rootNode.toString();
 	}
 	
-	private static String getCheckUploadUrl(String name) {
-		StringBuilder sb = new StringBuilder();
-		sb.append("https://api.parse.com/1/classes/Audio?");
-		try {
-			sb.append(URLEncoder.encode(getCheckUploadJsonString(name), "US-ASCII"));
-		} catch (UnsupportedEncodingException e) {
-			System.out.println("Unable to encode to US-ASCII");
-			e.printStackTrace();
-		}
-		return sb.toString();
-	}
-	
 	private static String checkUpload(String name) {
 		DefaultHttpClient httpclient = new DefaultHttpClient();
         HttpResponse response = null;
         HttpEntity entity = null;
         String responseString = null;
-        HttpGet httpGet = new HttpGet(getCheckUploadUrl(name));
+        String url = "https://api.parse.com/1/classes/Audio?";
+        try {
+            url += URLEncoder.encode("where={\"name\":\"" + name + "\"}", "US-ASCII");
+        } catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
+        }
+        HttpGet httpGet = new HttpGet(url);
         httpGet.addHeader("X-Parse-Application-Id", "ImI8mt1EM3NhZNRqYZOyQpNSwlfsswW73mHsZV3R");
         httpGet.addHeader("X-Parse-REST-API-Key", "1smRSlfAvbFg4AsDxat1yZ3xknHQbyhzZ4msAi5w");
         try {
@@ -160,7 +168,7 @@ public class AudioUpload {
         return hasResult(responseString);
 	}
 	
-	private static void associateUpload(String json) {
+	private static boolean associateUpload(String json) {
 		DefaultHttpClient httpclient = new DefaultHttpClient();
         HttpResponse response = null;
         HttpPost httpPost = new HttpPost("https://api.parse.com/1/classes/Audio");
@@ -174,19 +182,24 @@ public class AudioUpload {
             if (response.getStatusLine().getStatusCode() != 201) {
                 System.out.println("POST of audio failed!");
                 System.out.println(json);
+                return false;
             } 
         } catch (UnsupportedEncodingException e) {
             System.out.println("Failed to create entity from " + json);
             e.printStackTrace();
+            return false;
         } catch (ClientProtocolException e1) {
             System.out.println("Failed to connect to " +
                     httpPost.getURI().toASCIIString());
             e1.printStackTrace();
+            return false;
         } catch (IOException e1) {
             System.out.println("Failed to get setlist from " +
                     httpPost.getURI().toASCIIString());
             e1.printStackTrace();
+            return false;
         }
+        return true;
 	}
 	
 	private static void updateAudio(String objectId, String json) {
